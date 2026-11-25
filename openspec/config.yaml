@@ -1,0 +1,282 @@
+schema: spec-driven
+
+context: |
+  Language: en
+  All artifacts must be written in en.
+  Keep OpenSpec structural headings and SHALL/MUST keywords in English.
+
+  # Product
+  Folio is a personal crypto portfolio tracker: one dashboard for everything held in
+  on-chain wallets (by address), on exchanges (read-only API keys), on Hyperliquid and in
+  manual entries. It shows total value, positions merged across sources, allocation, PnL
+  against an average cost basis, trade history and, later, perpetuals and a read-only MCP
+  server so the owner can ask Claude about the portfolio.
+
+  - Read-only by design: Folio never moves funds, never signs anything, never connects a
+    wallet. Wallets are added by address only; exchanges by read-only keys only.
+  - Single user (the owner) first, but multi-user ready: every source, balance, trade,
+    snapshot and API token belongs to a user, and every query is scoped to the caller.
+  - Base currency is USD. Keep the option to display UAH and EUR later (a display
+    conversion, not a second set of stored values).
+  - Primary use is a desktop dashboard; every screen also works on a phone.
+
+  ## Auth
+  - Google sign-in only (Better Auth social login); sign-up is the first sign-in.
+  - Every source, trade, snapshot, override and API token has an owning user.
+  - Whether sign-in is limited to an env allowlist (`ALLOWED_EMAILS`) is decided in the
+    phase 1 change; the data model must not depend on the answer.
+
+  ## Sources (how data gets in)
+  A source is one wallet address or one exchange account. Each source has a user label
+  ("Main EVM", "Earn EVM"), can be enabled or disabled, and can be refreshed manually.
+  Every source type implements one adapter interface (validate, sync balances, sync
+  trades where the source has them, later sync perps) so providers can be swapped
+  without touching domain logic or UI.
+  1. EVM wallet by address: Ethereum, Arbitrum, Base, Optimism, BNB Chain, Polygon and
+     other chains the provider covers. Token balances plus DeFi positions (staking, LST
+     and LRT such as stETH, wstETH, weETH, liquidETH, lending).
+  2. Solana wallet by address: SOL, SPL tokens, LSTs and, where feasible, DeFi positions
+     (for example PT tokens).
+  3. Hyperliquid by wallet address, public info API, no keys:
+     - Account equity comes from `type: "portfolio"`: the last value of
+       `accountValueHistory` for the "day" period. The account is unified
+       (`userAbstraction` = "unifiedAccount"): never compute equity as spot USDC total +
+       unrealized PnL, because the USDC total already includes margin.
+     - Spot balances from `spotClearinghouseState`, prices from `allMids`.
+     - Perp positions from `clearinghouseState` for the main dex AND for every HIP-3 dex
+       (for example dex "xyz"); dexes are discovered through `perpDexs`.
+     - In Total value a perp account counts as its equity, never as position notional.
+  4. WhiteBIT via read-only API key and secret: main and trade balances, Earn (fixed and
+     flexible) where the API exposes it, and trade history.
+  5. Binance and Bybit via read-only keys, same adapter interface.
+  6. Manual source: holdings and trades entered by hand for anything not covered.
+  Provider choices (EVM, Solana, prices) are recorded in the change that introduces them.
+
+  ## Assets, merging and categories
+  - An asset is a canonical coin or token (symbol, name, logo, CoinGecko id, category).
+    Its per-chain contracts and exchange tickers map onto that one asset, so the same
+    asset across sources merges into one position (ETH in a wallet plus ETH on WhiteBIT).
+  - "Group derivatives" toggle: an asset may point at an underlying asset. With the
+    toggle on, stETH, wstETH, weETH and liquidETH roll up into ETH; LSTs and PT tokens
+    into SOL. The roll-up sums values; it never pretends the amounts are the same unit.
+  - Every asset has exactly one category: Stable, BTC, ETH, SOL, L1/L2, DeFi, Meme, RWA,
+    AI, Perp DEX (for example HYPE), Other. Auto-filled from CoinGecko categories; the
+    user can override it per asset, and an override always wins over a re-sync.
+
+  ## Data model (proposed per change, roughly)
+  users, sources, assets (+ per-chain contracts), balances (source, asset, amount, last
+  synced), trades (type buy / sell / deposit / withdraw / transfer / reward, asset,
+  amount, price, total, fee, date, source, external_id), portfolio_snapshots (daily total
+  value plus per-asset values), price_history cache, perp_positions, perp_fills,
+  api_tokens.
+
+  ## Screens
+  Dashboard (Portfolio)
+  - Summary cards: Total value, All-time PnL ($ and %), Positions count, change for
+    24h / 7d / 30d / 1y ($ and %).
+  - Portfolio value area chart with filters 1W, 1M, 1Y, All, from daily snapshots (cron
+    once per day plus a snapshot on every manual refresh). Hover tooltip with value and
+    date. History starts at the first snapshot; past wallet history is not reconstructed.
+  - Allocation donut with a switch: By asset (top N plus "Other") and By category.
+    Legend with value and %.
+  - The whole dashboard can be filtered by source (all, one or several).
+  Positions table (TanStack Table)
+  - Columns: Asset (logo, symbol, name), Price, 24h %, Amount, Value, Alloc %, Avg buy
+    price, PnL (unrealized $ and %), Sources. Sorting, search, "hide dust" (under $1)
+    toggle, expandable row with the breakdown by source.
+  Trade history
+  - Columns: Type, Asset, Amount, Price, Total, Fee, Date, Source. Filters by type,
+    asset, source, date range. Manual add and edit for the manual source. CSV export.
+  Sources
+  - Connected wallets and exchanges with status, last sync, value, refresh, edit label,
+    remove. Add flow: pick type, enter address or API keys, validate, first sync.
+  Analytics (phase 3, proposal first)
+  - Candidates to pick with the owner: realized vs unrealized PnL, PnL by asset and by
+    category, best and worst performers, stablecoin share ("dry powder"), concentration
+    risk (top-1 and top-3 share), allocation drift vs a target allocation per category,
+    portfolio vs BTC and ETH benchmark, monthly returns heatmap, average cost vs current
+    price per asset, fees paid.
+  Settings
+  - Language, theme, API tokens for the MCP server (phase 4).
+
+  ## PnL rules
+  - Cost basis is average cost from trades (exchange history plus manual trades).
+  - For wallet assets with no known buy price the user can set the average buy price by
+    hand; otherwise PnL is shown as "n/a". Never invent a cost basis.
+  - All-time PnL = current value + realized proceeds − total cost.
+  - Every formula is written down in the spec and covered by tests.
+
+  ## Perpetuals (phase 5)
+  - Sources: Hyperliquid (main dex plus HIP-3 dexes), then Bybit, Binance USDT-M and
+    WhiteBIT futures through the same adapter interface.
+  - Perps are kept apart from spot: spot allocation and spot PnL never include perp
+    notional.
+  - Open positions: Market, Side, Size (coin and USD notional), Leverage, Entry price,
+    Mark price, Liquidation price, distance to liquidation %, Margin used, Unrealized PnL
+    ($ and % of margin), Funding accrued, Source. Positions close to liquidation are
+    highlighted.
+  - Perp history: closed positions rebuilt from fills (Hyperliquid `userFills` and
+    `userFunding`, exchange trade and closed-PnL endpoints), idempotent by external_id.
+    Columns: Market, Side, Size, Entry avg, Exit avg, Realized PnL, Fees, Funding, Net PnL
+    (realized minus fees, plus or minus funding), Max leverage, Opened at, Closed at,
+    Duration, Source. Filters: market, side, source, date range, winners or losers. CSV.
+  - Perp stats: net PnL by period (1W / 1M / 1Y / All) with a cumulative PnL chart, win
+    rate, average win and loss, profit factor, total fees, funding paid and received,
+    PnL by market, longs vs shorts, average holding time.
+  - Dashboard: a "Perps" card (account equity, open uPnL, open positions count) and a
+    toggle for Total value with or without perp accounts.
+
+  ## Connect Claude (phase 4)
+  - A remote MCP server exposes the portfolio read-only: get_portfolio_summary,
+    get_positions, get_allocation (by asset or category), get_trades (with filters),
+    get_performance (period), get_sources. Phase 5 adds get_perp_positions and
+    get_perp_history.
+  - Auth is a per-user API token generated in Settings: stored hashed, revocable, last
+    used shown. No tool moves funds or changes sources.
+  - The docs explain how to add it as a custom connector in Claude.
+
+  # Stack
+  - Next.js (App Router), TypeScript strict, pnpm
+  - Postgres on Neon, Drizzle ORM + drizzle-kit (migrations), drizzle-zod schemas
+  - Better Auth (Google)
+  - oRPC + TanStack Query. Server API code lives in `src/server/`, separate from UI, and
+    stays exportable to OpenAPI
+  - TanStack Form + Zod + shadcn Field; the same Zod schemas validate forms and oRPC input
+  - TanStack Table for positions, trades and perp tables
+  - shadcn/ui + shadcn Charts (Recharts)
+  - NumberFlow (`@number-flow/react`) for animated large numbers
+  - date-fns, time zone Europe/Kyiv (day boundaries of snapshots and periods are Kyiv-local)
+  - Vitest for business logic
+  - Biome for lint and format
+  - Hosting: Vercel; scheduled jobs through Vercel Cron
+
+  # Principles
+  - Money is never a JS float. Token amounts and prices are exact decimals (Postgres
+    `numeric`, decimal strings in the API, a decimal type in code); USD values are
+    integers in cents. The representation, rounding rule and conversion points are
+    specified in the money spec of the phase 1 change.
+  - Folio is read-only: no trading, no withdrawals, no signing, no wallet connect.
+  - API keys are encrypted at rest (AES-256-GCM, key in `ENCRYPTION_KEY`), used only on
+    the server and shown only masked. Only read-only keys are accepted: where an exchange
+    can report key permissions, a key with trade or withdraw rights is refused.
+  - Every sync is idempotent: unique per source + `external_id`; running it twice changes
+    nothing.
+  - Provider rate limits are respected; a provider failure changes no stored data.
+  - Wallet addresses, API keys, balances and amounts never appear in log messages; logs
+    carry ids, provider names and counts.
+  - Public repository: no secrets, wallet addresses or personal data in code, docs,
+    tests, fixtures or commits; `.env*` gitignored; `.env.example` committed. Test
+    fixtures use obviously fake addresses and amounts.
+  - PnL is never faked: without a cost basis it is "n/a".
+  - Perps are separate from spot: a perp account counts as equity in Total value; perp
+    notional never enters spot allocation or spot PnL.
+  - All money and perp math (valuation, average cost, PnL, allocation, snapshots, net PnL,
+    fills to positions, liquidation distance) is covered by Vitest.
+
+  # Design
+  - Dark-first fintech dashboard; a light theme is supported on the same tokens. Theme
+    choice Light / Dark / System, stored per device, default System, applied before first
+    paint. Every color is a CSS variable in `globals.css` with a value for both themes
+    and WCAG AA contrast (text ≥ 4.5:1; large text, icons and chart marks ≥ 3:1).
+  - The token set is built in `globals.css` before any screen. Components never use raw
+    color values.
+  - References (owner supplies screenshots; the live pages render with JS and are not
+    fetched): layout and content from the Overlook portfolio page, visual style from the
+    "Bitval" Dribbble shot, features from the CoinStats portfolio dashboard and perp
+    history. Screenshots live in `docs/design/` once provided.
+  - Three supported layouts, all first-class (Tailwind default breakpoints): phone
+    < 768px, tablet 768–1023px, desktop ≥ 1024px. Mobile-first styles; every screen is
+    checked at 375px, 768px and 1280px in both themes with no horizontal page scroll.
+    Wide tables scroll inside their own container or collapse to cards on a phone.
+  - Loading states are skeletons shaped like the content (shadcn Skeleton, route
+    `loading.tsx` / Suspense fallbacks), not spinners. Spinners only inside a button or
+    menu item for a short action.
+  - Numbers use `tabular-nums`; large values animate with NumberFlow. Gains and losses
+    always differ by sign and text or icon as well as color.
+  - Provisional palette (to be confirmed against the screenshots in the phase 1 change;
+    contrast figures are against the card surface of the same theme):
+      Dark: bg #0B0C0E, panel #111316, card #15171B, card2 #1D2025, line #2A2E35,
+        input #737A86 (field outlines, 4.2:1), text #F4F5F6 (16.4:1), muted #A0A6B0
+        (7.3:1), accent #8B7CFF (5.5:1), accentText #A99FFF (7.8:1), btn #5B47E0
+        (onFill 6.1:1), gain #34D399 (9.3:1), loss #F87171 (6.5:1), warn #FBBF24
+        (10.8:1, near-liquidation and stale data), danger #C62A2F (fill for irreversible
+        actions, onFill 5.6:1), onFill #FFFFFF
+      Light: bg #F5F6F8, panel #ECEEF1, card #FFFFFF, card2 #F0F1F4, line #E2E5EA,
+        input #7C8490 (3.8:1), text #111317 (18.6:1), muted #5A616C (6.3:1), accent
+        #5B47E0 (6.1:1), accentText #4A38C7 (7.8:1), btn #5B47E0 (onFill 6.1:1), gain
+        #0B7A4B (5.4:1), loss #C2282D (5.8:1), warn #8A5300 (6.3:1), danger #C62A2F
+        (onFill 5.6:1), onFill #FFFFFF
+  - Chart tokens: `--chart-1` … `--chart-12` for categorical series (11 categories plus
+    "Other"), each ≥ 3:1 against the card in both themes and assigned to categories in a
+    fixed order so a category keeps its color everywhere; `--chart-area` for the value
+    chart line and gradient. Values are set in the phase 1 change.
+
+  # Roadmap (one OpenSpec change per phase or smaller, owner review after each)
+  1. Scaffold, auth, design tokens, data model, manual source, prices (CoinGecko),
+     positions table and summary cards.
+  2. EVM and Solana by address, Hyperliquid (equity and spot), WhiteBIT, daily snapshots,
+     value chart, allocation charts, trade history.
+  3. Binance, Bybit, category overrides, analytics.
+  4. MCP server for Claude (portfolio and spot tools).
+  5. Perpetuals: open positions, perp history, perp stats, dashboard card, perp MCP tools.
+  Later: UAH and EUR display currencies.
+
+rules:
+  proposal:
+    - One change at a time; state explicitly what is out of scope.
+    - Do not introduce dependencies outside the stack without a stated reason in the proposal.
+    - Call out any data-model decision that would block multiple users, swapping a data
+      provider, or adding a display currency.
+    - Name every external provider the change touches, with its plan, quota and rate limit.
+  specs:
+    - Write scenarios in Given/When/Then format.
+    - Every money rule (valuation, average cost, PnL, allocation, snapshots, merging,
+      perp net PnL, liquidation distance) has scenarios with concrete amounts as decimal
+      strings and USD in cents, and a time zone where dates matter.
+    - Examples use fake addresses, keys and amounts; never real ones.
+  design:
+    - Token amounts and prices as exact decimals, USD as integer cents; never floats.
+      State where rounding happens.
+    - Provider calls and key decryption happen only in `src/server/`.
+    - New source types go behind the source adapter interface; no provider-specific
+      fields leak into domain tables or UI.
+    - UI copy is never hardcoded in components; it comes from `src/constants/copy/`.
+    - Describe how each new screen lays out on phone, tablet and desktop.
+    - Any new color is a token in `globals.css` with a value for both themes; state its
+      contrast in each theme.
+    - Loading states are skeletons, not spinners.
+    - Note rate-limit, quota and idempotency implications for anything touching a provider.
+    - List new API error codes (with HTTP status) and their client copy; never return UI text
+      from the server.
+    - State what gets logged (scope, level, fields) and confirm no keys, addresses,
+      balances or personal data.
+  tasks:
+    - Small tasks, each ending in a state that type-checks.
+    - Include tasks for Vitest tests for every piece of money or perp logic.
+    - Final tasks always run tests, Biome and `tsc --noEmit`.
+    - UI tasks include checking the screen at phone, tablet and desktop widths, in both the
+      light and the dark theme.
+
+operations:
+  apply:
+    guidance:
+      - Work on a dedicated branch per change.
+      - Do not commit, push or open a PR during apply. Leave changes uncommitted for the
+        owner's review; only after explicit approval split them into small, meaningful
+        commits, push the branch and open the PR.
+      - Do not add dependencies outside the stack without explaining why.
+      - If a requirement proves wrong during implementation, stop and propose a spec
+        amendment instead of silently deviating.
+      - All user-facing strings go to `src/constants/copy/`; no string literals for UI copy
+        in pages or components.
+      - Errors leave the server as codes; map them on the client with `src/lib/errors.ts`.
+        No messages in shared Zod schemas.
+      - Log via `getLogger(scope)`, never `console.*`; never log keys, addresses, balances
+        or personal data.
+      - Never put a real wallet address, API key or balance into code, tests, fixtures,
+        docs or commit messages.
+      - Before finishing, run tests, Biome and type-check; report results honestly.
+      - Check every changed screen in both the light and the dark theme at 375 / 768 / 1280px.
+  archive:
+    guidance:
+      - Archive only after the owner approves the implemented change.

@@ -1,0 +1,31 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# next / build
+.next/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# env (only .env.example is committed)
+.env*
+!.env.example
+
+# vercel
+.vercel/
+
+# testing
+coverage/
+
+# misc
+.DS_Store
+*.log
+*.pem
+
+# personal Claude Code context
+CLAUDE.local.md
+
+# Playwright MCP screenshots and logs
+.playwright-mcp/
