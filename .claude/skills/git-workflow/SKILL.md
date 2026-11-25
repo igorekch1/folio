@@ -42,17 +42,15 @@ them and go back to "Before approval".
      to fix or to approve committing as is. After fixes, review again.
 3. **Commit in small logical units**, in dependency order (e.g. scaffold → domain logic →
    UI → server → docs). Each commit builds and passes tests on its own where practical.
-   Follow the commit convention below. The owner is the only author: no `Co-Authored-By`
-   trailer and no tool or AI attribution in any message. OpenSpec artifacts
-   (`openspec/changes/<name>/`, checked tasks) go in their own `docs(openspec): …` commit or
-   with the code they describe.
+   Follow the commit convention below. OpenSpec artifacts (`openspec/changes/<name>/`,
+   checked tasks) go in their own `docs(openspec): …` commit or with the code they describe.
 4. **Push** the branch: `git push -u origin <branch>`.
 5. **Open the PR** against `main` with `gh pr create --base main --title "<title>" --body-file <file>`:
    - **Title** becomes the single squash commit on `main`, so it MUST follow the commit
      convention (e.g. `feat(sources): add EVM wallet source`).
    - **Body**: fill every section of `.github/pull_request_template.md` (Summary, OpenSpec,
      Testing with real results, Owner steps, Checklist — tick only what is true). Remove
-     the HTML comments. No tool or AI attribution line.
+     the HTML comments.
    - Never put secrets, API keys, wallet addresses, balances or personal data in the PR.
 6. Report the PR URL. Do not merge — the owner merges with **Squash and merge**.
 7. After the owner merges, archiving is automatic: the `OpenSpec archive` GitHub workflow
